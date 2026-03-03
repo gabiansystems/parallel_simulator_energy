@@ -1,0 +1,11 @@
+{
+  "params": {
+    "arch": "HSW",
+    "sensor": "PKG",
+    "freq": 2.4,
+    "n_work": 100000000,
+    "n_stat": 1,
+    "n_cores": 8,
+    "seq_fraction": 0.0
+  }
+}
