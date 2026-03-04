@@ -16,6 +16,11 @@ Results are written into a JSON file for later analysis.
 - `cJSON.c` / `cJSON.h` – Third‑party JSON library.
 - `run.sh` – Simple helper script to build and run.
 
+## Install
+
+To use cJSON:
+- `sudo apt-get install libcjson-dev`
+
 ## Build
 
 Requirements:

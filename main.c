@@ -261,19 +261,19 @@ void measure_energy_temperature(bench_func_t bench_func,
         exit(EXIT_FAILURE);
     }
 
+    double current_temp;
     int target_idx; // rangement dans l'array des temperature
     int base_temp = (int)read_core_temperature(0);
     int i = 0;
     //***
     // Fin setup
-    // */
+    // *
+    /*
     printf("stating benchmark with temperature monitoring...\n");
     while (i < total_samples && done_targets < total_samples)
     {
-        double current_temp;
         current_temp = read_core_temperature(0);
         target_idx = ((int)current_temp) - base_temp;
-
         if (VERBOSE)
         {
             printf("current temp: %d, (target %d + %d)\n",current_temp,base_temp,temp_dev);
@@ -307,6 +307,15 @@ void measure_energy_temperature(bench_func_t bench_func,
             usleep(100000); // Sleep 100ms
         }
     }
+    */
+    for (int i = 0; i < n_samples; i++)
+    {
+        double current_temp = read_core_temperature(0);
+        measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
+        // Collect temperature and voltage from core 0
+        temperatures[i] = current_temp;
+        voltages[i] = read_core_voltage(0);
+    }
     close(fd);
     free(collected_per_target);
 
@@ -322,7 +331,7 @@ void measure_energy_temperature(bench_func_t bench_func,
 int main(int argc, char **argv)
 {
     const char *input_cfg = "input_demo.json";
-    const char *output_file = "sim1.json";
+    const char *output_file = "./resultats/sim1.json";
 
     params_t json_params;
     memset(&json_params, 0, sizeof(json_params));
@@ -386,13 +395,3 @@ int main(int argc, char **argv)
     free(n_cores_array);
     return 0;
 }
-
-
-
-
-
-
-
-
-
-

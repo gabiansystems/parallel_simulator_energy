@@ -10,7 +10,7 @@
 #include <errno.h>
 #include <time.h>
 #include <fcntl.h>
-#include "cJSON.h"
+#include <cjson/cJSON.h>
 #include "json_utils.h"
 /**
  * Compute statistics for an array of values.
