@@ -19,8 +19,46 @@
 typedef void (*bench_func_t)(const void *params);
 
 #define VERBOSE 1
+#define WARMUP_SECONDS 1.0
 #define MSR_IA32_PERF_STATUS 0x198
 #define MSR_IA32_THERM_STATUS 0x19C
+#define MSR_UNCORE_RATIO_LIMIT 0x620
+
+int write_msr(int cpu, off_t msr, uint64_t value)
+{
+    char path[64];
+    int fd;
+
+    sprintf(path, "/dev/cpu/%d/msr", cpu);
+    fd = open(path, O_WRONLY);
+    if (fd < 0)
+    {
+        perror("open");
+        return -1;
+    }
+
+    if (pwrite(fd, &value, sizeof(value), msr) != sizeof(value))
+    {
+        perror("pwrite");
+        close(fd);
+        return -1;
+    }
+
+    close(fd);
+    return 0;
+}
+
+uint64_t build_uncore_value(int min_ratio, int max_ratio)
+{
+    return ((uint64_t)min_ratio << 8) | max_ratio;
+}
+
+void set_uncore_freq_ghz(int cpu, int ratio)
+{
+    uint64_t val = build_uncore_value(ratio, ratio);
+    if (write_msr(cpu, MSR_UNCORE_RATIO_LIMIT, val) == 0)
+        printf("Uncore frequency fixed to %d00 MHz\n", ratio);
+}
 
 /**
  * Set the CPU frequency to a fixed value using cpupower.
@@ -33,6 +71,7 @@ void set_fixed_frequency(double freq_ghz)
     snprintf(cmd, sizeof(cmd),
              "sudo-g5k cpupower frequency-set -f %.2fGHz 2>&1 >> /dev/null", freq_ghz);
     system(cmd);
+    set_uncore_freq_ghz(0,(int)freq_ghz*10);
 }
 
 long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
@@ -137,6 +176,33 @@ int get_rapl_config(const char *sensor)
         return 8; // DRAM energy
     // Default to package
     return 2;
+}
+
+static void warmup_until_temperature(bench_func_t bench_func,
+                                     const void *params,
+                                     double target_temp,
+                                     double max_seconds)
+{
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    double current_temp;
+    printf("%d\n", (int)target_temp);
+    while (1)
+    {
+        bench_func(params);
+        // usleep(100); // Sleep 100ms
+        current_temp = read_core_temperature(0);
+        // printf("%d\n", (int)current_temp);
+        if (current_temp >= target_temp)
+            break;
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double elapsed = (now.tv_sec - start.tv_sec) +
+                         (now.tv_nsec - start.tv_nsec) / 1e9;
+
+        if (elapsed >= max_seconds) // safety exit
+            break;
+    }
 }
 
 /**
@@ -261,55 +327,20 @@ void measure_energy_temperature(bench_func_t bench_func,
         exit(EXIT_FAILURE);
     }
 
+    int i = 0;
     double current_temp;
     int target_idx; // rangement dans l'array des temperature
+    measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
     int base_temp = (int)read_core_temperature(0);
-    int i = 0;
     //***
     // Fin setup
     // *
-    /*
-    printf("stating benchmark with temperature monitoring...\n");
-    while (i < total_samples && done_targets < total_samples)
+    for (i=0; i < n_samples; i++)
     {
-        current_temp = read_core_temperature(0);
-        target_idx = ((int)current_temp) - base_temp;
-        if (VERBOSE)
-        {
-            printf("current temp: %d, (target %d + %d)\n",current_temp,base_temp,temp_dev);
-        }
-
-        // Check bounds: target_idx must be in [0, n_temps)
-        if (target_idx < 0 || target_idx >= temp_dev)
-        {
-            usleep(100000); // Sleep 100ms
-            continue;
-        }
-
-        // Check if we still need samples for this temperature
-        if (collected_per_target[target_idx] < n_samples)
-        {
-            measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
-            // Collect temperature and voltage from core 0
-            temperatures[i] = current_temp;
-            voltages[i] = read_core_voltage(0);
-            if (VERBOSE)
-            {
-                printf("n sample %d\n", collected_per_target[target_idx]);
-                printf("temperature %d\n", (int)current_temp);
-            }
-            collected_per_target[target_idx]++;
-            done_targets++;
-        }
-        else
-        {
-            // This temperature is full, skip
-            usleep(100000); // Sleep 100ms
-        }
-    }
-    */
-    for (int i = 0; i < n_samples; i++)
-    {
+        // Warm up cores before taking measurements so that each experiment
+        // starts from a comparable temperature, regardless of nthreads or
+        // total work size.
+        // warmup_until_temperature(bench_func, params, base_temp, 60.0);
         double current_temp = read_core_temperature(0);
         measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
         // Collect temperature and voltage from core 0
@@ -372,6 +403,7 @@ int main(int argc, char **argv)
         free(n_cores_array);
         return EXIT_FAILURE;
     }
+
     set_fixed_frequency(json_params.freq);
     for (int nthreads = 1; nthreads < n_cores_count + 1; nthreads++)
     {
@@ -395,3 +427,44 @@ int main(int argc, char **argv)
     free(n_cores_array);
     return 0;
 }
+
+    /*
+    printf("stating benchmark with temperature monitoring...\n");
+    while (i < total_samples && done_targets < total_samples)
+    {
+        current_temp = read_core_temperature(0);
+        target_idx = ((int)current_temp) - base_temp;
+        if (VERBOSE)
+        {
+            printf("current temp: %d, (target %d + %d)\n",current_temp,base_temp,temp_dev);
+        }
+
+        // Check bounds: target_idx must be in [0, n_temps)
+        if (target_idx < 0 || target_idx >= temp_dev)
+        {
+            usleep(100000); // Sleep 100ms
+            continue;
+        }
+
+        // Check if we still need samples for this temperature
+        if (collected_per_target[target_idx] < n_samples)
+        {
+            measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
+            // Collect temperature and voltage from core 0
+            temperatures[i] = current_temp;
+            voltages[i] = read_core_voltage(0);
+            if (VERBOSE)
+            {
+                printf("n sample %d\n", collected_per_target[target_idx]);
+                printf("temperature %d\n", (int)current_temp);
+            }
+            collected_per_target[target_idx]++;
+            done_targets++;
+        }
+        else
+        {
+            // This temperature is full, skip
+            usleep(100000); // Sleep 100ms
+        }
+    }
+    */

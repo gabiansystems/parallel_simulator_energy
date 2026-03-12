@@ -154,3 +154,6 @@ Top‑level structure:
 - The code uses low‑level perf and MSR interfaces; it must be run on a compatible Linux system with appropriate permissions (usually root or `sudo` wrapper).
 - CPU affinity and topology constants (`TPC`, `CPS`, etc.) in `parallel_sim.c` are tuned for a specific machine and may need adjustment on other systems.
 
+```{note}
+IA generated
+```
