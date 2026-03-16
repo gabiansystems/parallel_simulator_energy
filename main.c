@@ -288,24 +288,11 @@ void measure_energy_temperature(bench_func_t bench_func,
                                 int n_samples,
                                 const char *exp_name)
 {
-    int temp_dev = 1; // déviation de température
-    int done_targets = 0;
-    int total_samples = n_samples * temp_dev;
-    int *collected_per_target = malloc(temp_dev * sizeof(int));
-    if (!collected_per_target)
-    {
-        perror("malloc");
-        return -1;
-    }
-    for (int i = 0; i < temp_dev; i++)
-    {
-        collected_per_target[i] = 0;
-    }
     // Allocate memory for measurements
-    double *energies = malloc(total_samples * sizeof(double));
-    double *times = malloc(total_samples * sizeof(double));
-    double *temperatures = malloc(total_samples * sizeof(double));
-    double *voltages = malloc(total_samples * sizeof(double));
+    double *energies = malloc(n_samples * sizeof(double));
+    double *times = malloc(n_samples * sizeof(double));
+    double *temperatures = malloc(n_samples * sizeof(double));
+    double *voltages = malloc(n_samples * sizeof(double));
     if (!energies || !times || !temperatures || !voltages)
     {
         perror("malloc");
@@ -313,7 +300,6 @@ void measure_energy_temperature(bench_func_t bench_func,
         free(times);
         free(temperatures);
         free(voltages);
-        free(collected_per_target);
         return -1;
     }
     int fd = init_rapl_event(arch, sensor);
@@ -323,14 +309,11 @@ void measure_energy_temperature(bench_func_t bench_func,
         free(times);
         free(temperatures);
         free(voltages);
-        free(collected_per_target);
         exit(EXIT_FAILURE);
     }
 
     int i = 0;
     double current_temp;
-    int target_idx; // rangement dans l'array des temperature
-    measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
     int base_temp = (int)read_core_temperature(0);
     //***
     // Fin setup
@@ -341,7 +324,7 @@ void measure_energy_temperature(bench_func_t bench_func,
         // starts from a comparable temperature, regardless of nthreads or
         // total work size.
         warmup_until_temperature(bench_func, params, base_temp, 60.0);
-        double current_temp = read_core_temperature(0);
+        current_temp = read_core_temperature(0);
         measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
         // Collect temperature and voltage from core 0
         temperatures[i] = current_temp;
@@ -351,10 +334,10 @@ void measure_energy_temperature(bench_func_t bench_func,
     free(collected_per_target);
 
     // Write results for benchmark
-    update_subjson_double_array(output_file, "energy", exp_name, energies, total_samples);
-    update_subjson_double_array(output_file, "time", exp_name, times, total_samples);
-    update_subjson_double_array(output_file, "temperature", exp_name, temperatures, total_samples);
-    update_subjson_double_array(output_file, "voltage", exp_name, voltages, total_samples);
+    update_subjson_double_array(output_file, "energy", exp_name, energies, n_samples);
+    update_subjson_double_array(output_file, "time", exp_name, times, n_samples);
+    update_subjson_double_array(output_file, "temperature", exp_name, temperatures, n_samples);
+    update_subjson_double_array(output_file, "voltage", exp_name, voltages, n_samples);
     printf("Results saved successfully in: %s\n", output_file);
     return 0;
 }
@@ -424,7 +407,6 @@ int main(int argc, char **argv)
             json_params.n_stat,
             exp_name);
 
-            
         free(exp_name);
     }
     free(n_cores_array);
