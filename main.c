@@ -340,7 +340,7 @@ void measure_energy_temperature(bench_func_t bench_func,
         // Warm up cores before taking measurements so that each experiment
         // starts from a comparable temperature, regardless of nthreads or
         // total work size.
-        // warmup_until_temperature(bench_func, params, base_temp, 60.0);
+        warmup_until_temperature(bench_func, params, base_temp, 60.0);
         double current_temp = read_core_temperature(0);
         measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
         // Collect temperature and voltage from core 0
@@ -414,6 +414,7 @@ int main(int argc, char **argv)
             .total_units_per_barrier = (uint64_t)json_params.total_operations,
         };
         char *exp_name = build_name(&sim);
+
         measure_energy_temperature(
             exec_parallel_simulation_core_control,
             &sim,
@@ -422,49 +423,10 @@ int main(int argc, char **argv)
             json_params.sensor,
             json_params.n_stat,
             exp_name);
+
+            
         free(exp_name);
     }
     free(n_cores_array);
     return 0;
 }
-
-    /*
-    printf("stating benchmark with temperature monitoring...\n");
-    while (i < total_samples && done_targets < total_samples)
-    {
-        current_temp = read_core_temperature(0);
-        target_idx = ((int)current_temp) - base_temp;
-        if (VERBOSE)
-        {
-            printf("current temp: %d, (target %d + %d)\n",current_temp,base_temp,temp_dev);
-        }
-
-        // Check bounds: target_idx must be in [0, n_temps)
-        if (target_idx < 0 || target_idx >= temp_dev)
-        {
-            usleep(100000); // Sleep 100ms
-            continue;
-        }
-
-        // Check if we still need samples for this temperature
-        if (collected_per_target[target_idx] < n_samples)
-        {
-            measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
-            // Collect temperature and voltage from core 0
-            temperatures[i] = current_temp;
-            voltages[i] = read_core_voltage(0);
-            if (VERBOSE)
-            {
-                printf("n sample %d\n", collected_per_target[target_idx]);
-                printf("temperature %d\n", (int)current_temp);
-            }
-            collected_per_target[target_idx]++;
-            done_targets++;
-        }
-        else
-        {
-            // This temperature is full, skip
-            usleep(100000); // Sleep 100ms
-        }
-    }
-    */
