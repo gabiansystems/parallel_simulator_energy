@@ -17,12 +17,14 @@
 
 // Function pointer type for benchmark functions
 typedef void (*bench_func_t)(const void *params);
-
 #define VERBOSE 1
-#define WARMUP_SECONDS 1.0
+
+/////// hardware utils /////////
+
 #define MSR_IA32_PERF_STATUS 0x198
 #define MSR_IA32_THERM_STATUS 0x19C
 #define MSR_UNCORE_RATIO_LIMIT 0x620
+#define MSR_UNCORE_PERF_STATUS 0x621
 
 int write_msr(int cpu, off_t msr, uint64_t value)
 {
@@ -46,6 +48,29 @@ int write_msr(int cpu, off_t msr, uint64_t value)
 
     close(fd);
     return 0;
+}
+
+uint64_t read_msr(int cpu, off_t msr)
+{
+    char path[64];
+    int fd;
+    uint64_t value;
+
+    sprintf(path, "/dev/cpu/%d/msr", cpu);
+    fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        perror("open");
+        return 0;
+    }
+
+    if (pread(fd, &value, sizeof(value), msr) != sizeof(value)) {
+        perror("pread");
+        close(fd);
+        return 0;
+    }
+
+    close(fd);
+    return value;
 }
 
 uint64_t build_uncore_value(int min_ratio, int max_ratio)
@@ -74,6 +99,37 @@ void set_fixed_frequency(double freq_ghz)
     set_uncore_freq_ghz(0,(int)freq_ghz*10);
 }
 
+double read_core_voltage(int core)
+{
+    uint64_t val= read_msr(0,MSR_IA32_PERF_STATUS);
+    // Bits [47:32] contain the current VID value *in Intel VID units (1mV steps)*
+    unsigned int vid = (val >> 32) & 0xFFFF;
+    double voltage = vid * 0.001; // ≈ convert to volts
+    return voltage;
+}
+double read_core_temperature(int core)
+{
+    uint64_t val = read_msr(0, MSR_IA32_THERM_STATUS);
+    // For Haswell, temperature is in bits 22:16 (Reading Valid) and 6:0 (Temperature)
+    // Temperature Target is in bits 23:16, Digital Readout in bits 6:0
+    unsigned int temp_reading = (val >> 16) & 0x7F; // Bits 22:16 for Reading Valid + Digital readout
+    double temperature = (double)temp_reading;      // Temperature in degrees Celsius
+    return temperature;
+}
+
+double read_core_freq_ghz(int cpu) {
+    uint64_t val = read_msr(cpu, MSR_IA32_PERF_STATUS);
+    int ratio = (val >> 8) & 0xff;  // Bits 15:8 contain current multiplier
+    return ratio * 0.1;             // ratio * 100 MHz -> GHz
+}
+double read_uncore_freq_ghz(int cpu)
+{
+    uint64_t val = read_msr(cpu, MSR_UNCORE_PERF_STATUS);
+
+    int ratio = val & 0xff;      // lower 8 bits
+    return ratio * 0.1;          // ratio * 100 MHz -> GHz
+}
+
 long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
                      int cpu, int group_fd, unsigned long flags)
 {
@@ -83,140 +139,18 @@ long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
                   group_fd, flags);
     return ret;
 }
-double read_core_voltage(int core)
-{
-    char msr_path[64];
-    snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%d/msr", core);
-    int fd = open(msr_path, O_RDONLY);
-    if (fd < 0)
-    {
-        perror("open msr voltage");
-        return -1.0;
-    }
-
-    uint64_t val;
-    if (pread(fd, &val, sizeof(val), MSR_IA32_PERF_STATUS) != sizeof(val))
-    {
-        perror("pread msr");
-        close(fd);
-        return -1.0;
-    }
-    close(fd);
-
-    // Bits [47:32] contain the current VID value *in Intel VID units (1mV steps)*
-    unsigned int vid = (val >> 32) & 0xFFFF;
-    double voltage = vid * 0.001; // ≈ convert to volts
-    return voltage;
-}
-double read_core_temperature(int core)
-{
-    char msr_path[64];
-    snprintf(msr_path, sizeof(msr_path), "/dev/cpu/%d/msr", core);
-
-    int fd = open(msr_path, O_RDONLY);
-    if (fd < 0)
-    {
-        perror("open msr temperature");
-        return -1.0;
-    }
-
-    uint64_t val;
-    if (pread(fd, &val, sizeof(val), MSR_IA32_THERM_STATUS) != sizeof(val))
-    {
-        perror("pread msr");
-        close(fd);
-        return -1.0;
-    }
-    close(fd);
-
-    // For Haswell, temperature is in bits 22:16 (Reading Valid) and 6:0 (Temperature)
-    // Temperature Target is in bits 23:16, Digital Readout in bits 6:0
-    unsigned int temp_reading = (val >> 16) & 0x7F; // Bits 22:16 for Reading Valid + Digital readout
-    double temperature = (double)temp_reading;      // Temperature in degrees Celsius
-    return temperature;
-}
-
-/**
- * Get RAPL type based on architecture
- */
-int get_rapl_type(const char *arch)
-{
-    if (strcmp(arch, "SNB") == 0)
-        return 27; // Sandy Bridge
-    if (strcmp(arch, "IVB") == 0)
-        return 29; // Ivy Bridge
-    if (strcmp(arch, "HSW") == 0)
-        return 34; // Haswell
-    if (strcmp(arch, "BDW") == 0)
-        return 33; // Broadwell
-    if (strcmp(arch, "SKL") == 0)
-        return 53; // Skylake
-    if (strcmp(arch, "CLX") == 0)
-        return 65; // Cascade Lake
-    if (strcmp(arch, "ICX") == 0)
-        return 89; // Ice Lake
-    if (strcmp(arch, "EMR") == 0)
-        return 175; // Emerald Rapids
-    // Default to Haswell
-    return 34;
-}
-
-/**
- * Get RAPL config based on sensor type
- */
-int get_rapl_config(const char *sensor)
-{
-    if (strcmp(sensor, "PKG") == 0)
-        return 2; // Package energy
-    if (strcmp(sensor, "PP0") == 0)
-        return 1; // PP0 energy (cores)
-    if (strcmp(sensor, "PP1") == 0)
-        return 4; // PP1 energy (uncore)
-    if (strcmp(sensor, "DRAM") == 0)
-        return 8; // DRAM energy
-    // Default to package
-    return 2;
-}
-
-static void warmup_until_temperature(bench_func_t bench_func,
-                                     const void *params,
-                                     double target_temp,
-                                     double max_seconds)
-{
-    struct timespec start, now;
-    clock_gettime(CLOCK_MONOTONIC, &start);
-    double current_temp;
-    printf("%d\n", (int)target_temp);
-    while (1)
-    {
-        bench_func(params);
-        // usleep(100); // Sleep 100ms
-        current_temp = read_core_temperature(0);
-        // printf("%d\n", (int)current_temp);
-        if (current_temp >= target_temp)
-            break;
-
-        clock_gettime(CLOCK_MONOTONIC, &now);
-        double elapsed = (now.tv_sec - start.tv_sec) +
-                         (now.tv_nsec - start.tv_nsec) / 1e9;
-
-        if (elapsed >= max_seconds) // safety exit
-            break;
-    }
-}
-
 /**
  * Initialize a RAPL energy measurement event based on arch and sensor.
  * Returns file descriptor on success, -1 on error.
  */
-int init_rapl_event(const char *arch, const char *sensor)
+int init_rapl_event(int arch, int sensor)
 {
     struct perf_event_attr pe;
     memset(&pe, 0, sizeof(struct perf_event_attr));
 
-    pe.type = get_rapl_type(arch); // RAPL type based on architecture
+    pe.type = arch; // RAPL type based on architecture
     pe.size = sizeof(struct perf_event_attr);
-    pe.config = get_rapl_config(sensor); // RAPL config based on sensor
+    pe.config = sensor; // RAPL config based on sensor
     pe.disabled = 1;
     pe.exclude_kernel = 0;
     pe.exclude_hv = 0;
@@ -230,6 +164,77 @@ int init_rapl_event(const char *arch, const char *sensor)
 
     return fd;
 }
+
+/////// temperature utils ////////
+
+static void warmup_until_temperature(double target_temp,
+                                     double max_seconds
+                                    )
+{
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+    double current_temp;
+    printf("%d\n", (int)target_temp);
+    while (1)
+    {
+        // usleep(100); // Sleep 100ms
+        run_synthetic_load();
+        current_temp = read_core_temperature(0);
+        printf("temp: %d\n", (int)current_temp);
+        if (current_temp >= target_temp)
+            break;
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double elapsed = (now.tv_sec - start.tv_sec) +
+                         (now.tv_nsec - start.tv_nsec) / 1e9;
+
+        if (elapsed >= max_seconds) // safety exit
+            break;
+    }
+}
+
+static void stabilize_temperature(double max_variation,
+                                  int required_stable_records,
+                                  double max_seconds)
+{
+    struct timespec start, now;
+    clock_gettime(CLOCK_MONOTONIC, &start);
+
+    double prev_temp = read_core_temperature(0);
+    int stable_count = 0;
+
+    printf("stabilize start temperature: %d\n", (int)prev_temp);
+    // usleep(1000000); // Sleep 100ms
+
+    while (1)
+    {
+        double current_temp = read_core_temperature(0);
+        printf("temperature %d\n", (int)current_temp);
+        run_synthetic_load();
+        if (fabs(current_temp - prev_temp) <= max_variation)
+            stable_count++;
+        else
+            stable_count = 0;
+
+        if (stable_count >= required_stable_records)
+            break;
+
+        prev_temp = current_temp;
+
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double elapsed = (now.tv_sec - start.tv_sec) +
+                         (now.tv_nsec - start.tv_nsec) / 1e9;
+
+        if (elapsed >= max_seconds) // safety exit
+            break;
+    }
+
+    printf("stabilization reached: %d consecutive records within %.2f variation\n",
+           stable_count, max_variation);
+}
+
+
+//////// measurements ////////
 
 /**
  * Execute a benchmark function while measuring energy consumption and execution time.
@@ -283,10 +288,12 @@ void measure_energy_and_time(bench_func_t bench_func,
 void measure_energy_temperature(bench_func_t bench_func,
                                 void *params,
                                 const char *output_file,
-                                const char *arch,
-                                const char *sensor,
+                                int arch,
+                                int sensor,
                                 int n_samples,
-                                const char *exp_name)
+                                const char *exp_name,
+                                int base_temp
+                                )
 {
     // Allocate memory for measurements
     double *energies = malloc(n_samples * sizeof(double));
@@ -312,18 +319,16 @@ void measure_energy_temperature(bench_func_t bench_func,
         exit(EXIT_FAILURE);
     }
 
-    int i = 0;
     double current_temp;
-    int base_temp = (int)read_core_temperature(0);
     //***
     // Fin setup
     // *
-    for (i=0; i < n_samples; i++)
+    for (int i=0; i < n_samples; i++)
     {
         // Warm up cores before taking measurements so that each experiment
         // starts from a comparable temperature, regardless of nthreads or
         // total work size.
-        warmup_until_temperature(bench_func, params, base_temp, 60.0);
+        // warmup_until_temperature(base_temp, 60.0);
         current_temp = read_core_temperature(0);
         measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
         // Collect temperature and voltage from core 0
@@ -331,7 +336,6 @@ void measure_energy_temperature(bench_func_t bench_func,
         voltages[i] = read_core_voltage(0);
     }
     close(fd);
-    free(collected_per_target);
 
     // Write results for benchmark
     update_subjson_double_array(output_file, "energy", exp_name, energies, n_samples);
@@ -356,7 +360,7 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("Loaded config: arch=%s sensor=%s freq=%.2f n_work=%d n_stat=%d n_cores=%d seq_fraction=%.2f\n",
+    printf("Loaded config: arch=%d sensor=%d freq=%.2f n_work=%d n_stat=%d n_cores=%d seq_fraction=%.2f\n",
            json_params.arch,
            json_params.sensor,
            json_params.freq,
@@ -386,9 +390,12 @@ int main(int argc, char **argv)
         free(n_cores_array);
         return EXIT_FAILURE;
     }
-
     set_fixed_frequency(json_params.freq);
-    for (int nthreads = 1; nthreads < n_cores_count + 1; nthreads++)
+
+    // stabilize_temperature(1,10,60.0);
+    // int base_temp = (int)read_core_temperature(0);
+
+    for (int nthreads = n_cores_count; nthreads > 0; nthreads--)
     {
         parallel_sim_params_t sim = {
             .nthreads = nthreads,
@@ -405,7 +412,9 @@ int main(int argc, char **argv)
             json_params.arch,
             json_params.sensor,
             json_params.n_stat,
-            exp_name);
+            exp_name,
+            base_temp
+            );
 
         free(exp_name);
     }

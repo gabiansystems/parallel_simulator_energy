@@ -24,5 +24,5 @@ typedef struct
  * that measurements are more reproducible.
  */
 void exec_parallel_simulation_core_control(const parallel_sim_params_t *params);
-
+void run_synthetic_load();
 #endif

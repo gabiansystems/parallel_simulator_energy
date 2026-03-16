@@ -13,49 +13,46 @@
 #include <cjson/cJSON.h>
 #include "json_utils.h"
 /**
- * Compute statistics for an array of values.
+ * Get RAPL type based on architecture
  */
-void compute_stats(double *arr, int n, double *min, double *max, double *median)
+int get_rapl_type(const char *arch)
 {
-    if (n <= 0)
-        return;
-    *min = *max = arr[0];
-    for (int i = 1; i < n; i++)
-    {
-        if (arr[i] < *min)
-            *min = arr[i];
-        if (arr[i] > *max)
-            *max = arr[i];
-    }
-
-    float *sorted = malloc(n * sizeof(double));
-    if (!sorted)
-    {
-        perror("malloc in compute_stats");
-        return;
-    }
-
-    for (int i = 0; i < n; i++)
-        sorted[i] = arr[i];
-
-    // Simple bubble sort
-    for (int i = 0; i < n - 1; i++)
-        for (int j = 0; j < n - i - 1; j++)
-            if (sorted[j] > sorted[j + 1])
-            {
-                double tmp = sorted[j];
-                sorted[j] = sorted[j + 1];
-                sorted[j + 1] = tmp;
-            }
-
-    if (n % 2 == 0)
-        *median = (sorted[n / 2 - 1] + sorted[n / 2]) / 2.0f;
-    else
-        *median = sorted[n / 2];
-
-    free(sorted);
+    if (strcmp(arch, "SNB") == 0)
+        return 27; // Sandy Bridge
+    if (strcmp(arch, "IVB") == 0)
+        return 29; // Ivy Bridge
+    if (strcmp(arch, "HSW") == 0)
+        return 34; // Haswell
+    if (strcmp(arch, "BDW") == 0)
+        return 33; // Broadwell
+    if (strcmp(arch, "SKL") == 0)
+        return 53; // Skylake
+    if (strcmp(arch, "CLX") == 0)
+        return 65; // Cascade Lake
+    if (strcmp(arch, "ICX") == 0)
+        return 89; // Ice Lake
+    if (strcmp(arch, "EMR") == 0)
+        return 175; // Emerald Rapids
+    // Default to Haswell
+    return 34;
 }
 
+/**
+ * Get RAPL config based on sensor type
+ */
+int get_rapl_config(const char *sensor)
+{
+    if (strcmp(sensor, "PKG") == 0)
+        return 2; // Package energy
+    if (strcmp(sensor, "PP0") == 0)
+        return 1; // PP0 energy (cores)
+    if (strcmp(sensor, "PP1") == 0)
+        return 4; // PP1 energy (uncore)
+    if (strcmp(sensor, "DRAM") == 0)
+        return 8; // DRAM energy
+    // Default to package
+    return 2;
+}
 /**
  * Update or add a doubles array inside a sub-JSON object.
  * Example: in {"measurements": {...}}, add or replace "doubles_series".
@@ -299,15 +296,13 @@ int read_params_from_json(const char *filename, params_t *p)
 
     const cJSON *arch = cJSON_GetObjectItem(params, "arch");
     const cJSON *sensor = cJSON_GetObjectItem(params, "sensor");
-    if (arch && arch->valuestring)
-    {
-        strncpy(p->arch, arch->valuestring, sizeof(p->arch) - 1);
-        p->arch[sizeof(p->arch) - 1] = '\0';
+
+    if (arch && arch->valuestring) {
+        p->arch = get_rapl_type(arch->valuestring); // convert to int
     }
-    if (sensor && sensor->valuestring)
-    {
-        strncpy(p->sensor, sensor->valuestring, sizeof(p->sensor) - 1);
-        p->sensor[sizeof(p->sensor) - 1] = '\0';
+
+    if (sensor && sensor->valuestring) {
+        p->sensor = get_rapl_config(sensor->valuestring); // convert to int
     }
 
     p->freq = cJSON_GetObjectItem(params, "freq")->valuedouble;
@@ -334,8 +329,8 @@ int create_output_json(const char *filename, const params_t *p,
     char date_str[32];
     strftime(date_str, sizeof(date_str), "%Y-%m-%d %H:%M:%S", &tm_now);
     cJSON_AddStringToObject(params, "date", date_str);
-    cJSON_AddStringToObject(params, "arch", p->arch);
-    cJSON_AddStringToObject(params, "sensor", p->sensor);
+    cJSON_AddNumberToObject(params, "arch", p->arch);
+    cJSON_AddNumberToObject(params, "sensor", p->sensor);
     cJSON_AddNumberToObject(params, "freq", p->freq);
     cJSON_AddNumberToObject(params, "n_work", p->total_operations);
     cJSON_AddNumberToObject(params, "n_stat", p->n_stat);

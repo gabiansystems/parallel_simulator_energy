@@ -19,8 +19,8 @@
  */
 typedef struct
 {
-    char arch[32];          /**< Architecture identifier for RAPL (e.g. "HSW"). */
-    char sensor[32];        /**< RAPL domain (e.g. "PKG"). */
+    int arch;          /**< Architecture identifier for RAPL */
+    int sensor;        /**< RAPL domain. */
     double freq;            /**< Target CPU frequency in GHz. */
     int total_operations;   /**< Total synthetic work units per run. */
     int n_stat;             /**< Number of repetitions / statistical samples. */

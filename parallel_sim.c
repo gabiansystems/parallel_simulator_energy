@@ -14,6 +14,8 @@
 #define TPC 2 // Threads per core
 #define CPS 8 // Core per socket
 #define CPM 2 // Core per machine
+#define NCORES 8
+#define WORK_UNITS 100000000ULL
 
 static pthread_barrier_t barrier;
 // pas d'optims
@@ -36,6 +38,32 @@ static inline void do_work(uint64_t units)
     }
     sink += x;
 }
+
+
+static void *worker(void *arg)
+{
+    int tid = (intptr_t)arg;
+
+    cpu_set_t cpuset;
+    CPU_ZERO(&cpuset);
+    CPU_SET(tid, &cpuset);
+    sched_setaffinity(0, sizeof(cpu_set_t), &cpuset);
+
+    do_work(WORK_UNITS);
+    return NULL;
+}
+
+void run_synthetic_load()
+{
+    pthread_t threads[NCORES];
+
+    for (int t = 0; t < NCORES; ++t)
+        pthread_create(&threads[t], NULL, worker, (void *)(intptr_t)t);
+
+    for (int t = 0; t < NCORES; ++t)
+        pthread_join(threads[t], NULL);
+}
+
 
 /**
  * @brief Dans cette version, le travail séquentiel est réalisé après la création des threads
