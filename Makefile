@@ -1,12 +1,19 @@
 CC = gcc
-CFLAGS = -Wall -Wextra -g -pthread
-SRC = main.c parallel_sim.c json_utils.c
-OUT = counter
+CFLAGS = -Wall -Wextra -g
+LDFLAGS = -pthread
 
-all: $(OUT)
+MAIN ?= main_off.c
+TARGET ?= counter_off
 
-$(OUT): $(SRC)
-	$(CC) $(CFLAGS) -o $@ $^ -lm -lcjson
+SRC = $(MAIN) parallel_sim.c json_utils.c
+
+all: $(TARGET)
+
+$(TARGET): $(SRC)
+	$(CC) $(CFLAGS) -o $@ $^ $(LDFLAGS) -lm -lcjson
+
+on:
+	$(MAKE) MAIN=main_on.c TARGET=counter_on CFLAGS+=" -DTEST_MODE"
 
 clean:
-	rm -f $(OUT)
+	rm -f counter_off counter_on

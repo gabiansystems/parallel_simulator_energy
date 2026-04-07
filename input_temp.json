@@ -4,7 +4,7 @@
     "sensor": "PKG",
     "freq": 2.4,
     "n_work": 1000000000,
-    "n_stat": 100,
+    "n_stat": 10,
     "n_cores": 8,
     "seq_fraction": 0.0
   }

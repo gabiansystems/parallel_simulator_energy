@@ -329,6 +329,7 @@ int create_output_json(const char *filename, const params_t *p,
     char date_str[32];
     strftime(date_str, sizeof(date_str), "%Y-%m-%d %H:%M:%S", &tm_now);
     cJSON_AddStringToObject(params, "date", date_str);
+    cJSON_AddStringToObject(params, "description", "off");
     cJSON_AddNumberToObject(params, "arch", p->arch);
     cJSON_AddNumberToObject(params, "sensor", p->sensor);
     cJSON_AddNumberToObject(params, "freq", p->freq);

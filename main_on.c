@@ -17,7 +17,7 @@
 
 // Function pointer type for benchmark functions
 typedef void (*bench_func_t)(const void *params);
-#define VERBOSE 1
+#define VERBOSE 0
 
 /////// hardware utils /////////
 
@@ -58,12 +58,14 @@ uint64_t read_msr(int cpu, off_t msr)
 
     sprintf(path, "/dev/cpu/%d/msr", cpu);
     fd = open(path, O_RDONLY);
-    if (fd < 0) {
+    if (fd < 0)
+    {
         perror("open");
         return 0;
     }
 
-    if (pread(fd, &value, sizeof(value), msr) != sizeof(value)) {
+    if (pread(fd, &value, sizeof(value), msr) != sizeof(value))
+    {
         perror("pread");
         close(fd);
         return 0;
@@ -96,12 +98,12 @@ void set_fixed_frequency(double freq_ghz)
     snprintf(cmd, sizeof(cmd),
              "sudo-g5k cpupower frequency-set -f %.2fGHz 2>&1 >> /dev/null", freq_ghz);
     system(cmd);
-    set_uncore_freq_ghz(0,(int)freq_ghz*10);
+    set_uncore_freq_ghz(0, (int)(freq_ghz * 10));
 }
 
 double read_core_voltage(int core)
 {
-    uint64_t val= read_msr(0,MSR_IA32_PERF_STATUS);
+    uint64_t val = read_msr(0, MSR_IA32_PERF_STATUS);
     // Bits [47:32] contain the current VID value *in Intel VID units (1mV steps)*
     unsigned int vid = (val >> 32) & 0xFFFF;
     double voltage = vid * 0.001; // ≈ convert to volts
@@ -117,17 +119,18 @@ double read_core_temperature(int core)
     return temperature;
 }
 
-double read_core_freq_ghz(int cpu) {
+double read_core_freq_ghz(int cpu)
+{
     uint64_t val = read_msr(cpu, MSR_IA32_PERF_STATUS);
-    int ratio = (val >> 8) & 0xff;  // Bits 15:8 contain current multiplier
-    return ratio * 0.1;             // ratio * 100 MHz -> GHz
+    int ratio = (val >> 8) & 0xff; // Bits 15:8 contain current multiplier
+    return ratio * 0.1;            // ratio * 100 MHz -> GHz
 }
 double read_uncore_freq_ghz(int cpu)
 {
     uint64_t val = read_msr(cpu, MSR_UNCORE_PERF_STATUS);
 
-    int ratio = val & 0xff;      // lower 8 bits
-    return ratio * 0.1;          // ratio * 100 MHz -> GHz
+    int ratio = val & 0xff; // lower 8 bits
+    return ratio * 0.1;     // ratio * 100 MHz -> GHz
 }
 
 long perf_event_open(struct perf_event_attr *hw_event, pid_t pid,
@@ -161,15 +164,13 @@ int init_rapl_event(int arch, int sensor)
         perror("Error opening RAPL perf event");
         return -1;
     }
-
     return fd;
 }
 
 /////// temperature utils ////////
 
 static void warmup_until_temperature(double target_temp,
-                                     double max_seconds
-                                    )
+                                     double max_seconds)
 {
     struct timespec start, now;
     clock_gettime(CLOCK_MONOTONIC, &start);
@@ -177,8 +178,8 @@ static void warmup_until_temperature(double target_temp,
     printf("%d\n", (int)target_temp);
     while (1)
     {
-        // usleep(100); // Sleep 100ms
-        run_synthetic_load();
+        usleep(100000); // Sleep 100ms
+        // run_synthetic_load();
         current_temp = read_core_temperature(0);
         printf("temp: %d\n", (int)current_temp);
         if (current_temp >= target_temp)
@@ -204,13 +205,11 @@ static void stabilize_temperature(double max_variation,
     int stable_count = 0;
 
     printf("stabilize start temperature: %d\n", (int)prev_temp);
-    // usleep(1000000); // Sleep 100ms
 
     while (1)
     {
         double current_temp = read_core_temperature(0);
         printf("temperature %d\n", (int)current_temp);
-        run_synthetic_load();
         if (fabs(current_temp - prev_temp) <= max_variation)
             stable_count++;
         else
@@ -225,14 +224,17 @@ static void stabilize_temperature(double max_variation,
         double elapsed = (now.tv_sec - start.tv_sec) +
                          (now.tv_nsec - start.tv_nsec) / 1e9;
 
-        if (elapsed >= max_seconds) // safety exit
+        if (elapsed >= max_seconds)
+        { // safety exit
+            printf("Time up\n");
             break;
+        }
+        usleep(100000);
     }
 
     printf("stabilization reached: %d consecutive records within %.2f variation\n",
            stable_count, max_variation);
 }
-
 
 //////// measurements ////////
 
@@ -292,8 +294,7 @@ void measure_energy_temperature(bench_func_t bench_func,
                                 int sensor,
                                 int n_samples,
                                 const char *exp_name,
-                                int base_temp
-                                )
+                                int base_temp)
 {
     // Allocate memory for measurements
     double *energies = malloc(n_samples * sizeof(double));
@@ -323,12 +324,12 @@ void measure_energy_temperature(bench_func_t bench_func,
     //***
     // Fin setup
     // *
-    for (int i=0; i < n_samples; i++)
+    for (int i = 0; i < n_samples; i++)
     {
         // Warm up cores before taking measurements so that each experiment
         // starts from a comparable temperature, regardless of nthreads or
         // total work size.
-        // warmup_until_temperature(base_temp, 60.0);
+        // warmup_until_temperature(base_temp, 600.0);
         current_temp = read_core_temperature(0);
         measure_energy_and_time(bench_func, params, fd, &energies[i], &times[i]);
         // Collect temperature and voltage from core 0
@@ -342,7 +343,10 @@ void measure_energy_temperature(bench_func_t bench_func,
     update_subjson_double_array(output_file, "time", exp_name, times, n_samples);
     update_subjson_double_array(output_file, "temperature", exp_name, temperatures, n_samples);
     update_subjson_double_array(output_file, "voltage", exp_name, voltages, n_samples);
-    printf("Results saved successfully in: %s\n", output_file);
+    if (VERBOSE)
+    {
+        printf("Results saved successfully in: %s\n", output_file);
+    }
     return 0;
 }
 
@@ -350,6 +354,32 @@ int main(int argc, char **argv)
 {
     const char *input_cfg = "input_demo.json";
     const char *output_file = "./resultats/sim1.json";
+    int opt;
+
+    // Parse command line options
+    while ((opt = getopt(argc, argv, "i:o:h")) != -1)
+    {
+        switch (opt)
+        {
+        case 'i':
+            input_cfg = optarg;
+            break;
+        case 'o':
+            output_file = optarg;
+            break;
+        case 'h':
+            printf("Usage: %s -i input_file -o output_file\n", argv[0]);
+            return 0;
+        default:
+            fprintf(stderr, "Usage: %s -i input_file -o output_file\n", argv[0]);
+            return 1;
+        }
+    }
+    if (VERBOSE)
+    {
+        printf("Input config: %s\n", input_cfg);
+        printf("Output file: %s\n", output_file);
+    }
 
     params_t json_params;
     memset(&json_params, 0, sizeof(json_params));
@@ -360,14 +390,17 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
 
-    printf("Loaded config: arch=%d sensor=%d freq=%.2f n_work=%d n_stat=%d n_cores=%d seq_fraction=%.2f\n",
-           json_params.arch,
-           json_params.sensor,
-           json_params.freq,
-           json_params.total_operations,
-           json_params.n_stat,
-           json_params.n_cores,
-           json_params.seq_fraction);
+    if (VERBOSE)
+    {
+        printf("Loaded config: arch=%d sensor=%d freq=%.2f n_work=%d n_stat=%d n_cores=%d seq_fraction=%.2f\n",
+               json_params.arch,
+               json_params.sensor,
+               json_params.freq,
+               json_params.total_operations,
+               json_params.n_stat,
+               json_params.n_cores,
+               json_params.seq_fraction);
+    }
 
     // Build core counts [1..n_cores]
     int n_cores_count = json_params.n_cores;
@@ -391,9 +424,10 @@ int main(int argc, char **argv)
         return EXIT_FAILURE;
     }
     set_fixed_frequency(json_params.freq);
-
-    // stabilize_temperature(1,10,60.0);
-    // int base_temp = (int)read_core_temperature(0);
+    // stabilize_temperature(1,100,600.0);
+    // usleep(100000);
+    // stabilize_temperature(1,100,600.0);
+    int base_temp = (int)read_core_temperature(0);
 
     for (int nthreads = n_cores_count; nthreads > 0; nthreads--)
     {
@@ -413,8 +447,7 @@ int main(int argc, char **argv)
             json_params.sensor,
             json_params.n_stat,
             exp_name,
-            base_temp
-            );
+            base_temp);
 
         free(exp_name);
     }

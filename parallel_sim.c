@@ -15,7 +15,7 @@
 #define CPS 8 // Core per socket
 #define CPM 2 // Core per machine
 #define NCORES 8
-#define WORK_UNITS 100000000ULL
+#define WORK_UNITS 10000000000ULL
 
 static pthread_barrier_t barrier;
 // pas d'optims
