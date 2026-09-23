@@ -1,159 +1,173 @@
-# Parallel Simulation Energy Counter
+# parallel\_simulator\_energy
 
-This project runs a synthetic parallel workload under Linux and measures:
+Mesure de la consommation énergétique d'un benchmark synthétique parallèle
+sous **fréquence uncore fixée** via l'interface RAPL perf\_event de Linux.
 
-- Energy consumption via Intel RAPL perf events
-- Execution time
-- Core temperature and voltage
+Ce dépôt est un **banc d'essai pour l'effet de la fréquence uncore** sur les
+mesures d'énergie par RAPL. Contrairement à un benchmark généraliste, le
+binaire fixe systématiquement la fréquence uncore (MSR `0x620`) en même temps
+que la fréquence cœur — l'objectif est de neutraliser la variabilité introduite
+par le scaling uncore dynamique et d'isoler la contribution de l'uncore à
+l'énergie mesurée par le domaine PKG.
 
-Results are written into a JSON file for later analysis.
+---
 
-## Files
+## Structure
 
-- `main.c` – Entry point, sets experiment parameters, runs the simulation and measurements.
-- `parallel_sim.c` / `parallel_sim.h` – Synthetic parallel workload (Amdahl-like model).
-- `json_utils.c` / `json_utils.h` – JSON helpers built on `cJSON` to read/write experiment configs and results.
-- `cJSON.c` / `cJSON.h` – Third‑party JSON library.
-- `run.sh` – Simple helper script to build and run.
+```
+parallel_simulator_energy/
+├── benchmarks/
+│   ├── parallel_sim.c   charge synthétique Amdahl, pinning par socket
+│   └── parallel_sim.h
+├── energy_tool/
+│   ├── counter.c        RAPL, MSR, température, fréquence, boucle de mesure
+│   └── counter.h
+├── launch_scripts/
+│   └── g5k_uncore_bench.sh   sweep N runs sur un nœud G5K
+├── params/
+│   └── parallel_sim_uncore.json   config de référence
+├── tests/
+│   ├── test_sim.c       tests de logique pure (no root)
+│   ├── test_probes.c    tests des sondes matérielles (root)
+│   ├── Makefile
+│   └── unity/           framework Unity (embarqué)
+├── utils/
+│   ├── cJSON.{c,h}      parser JSON (embarqué, pas de dépendance système)
+│   ├── json_utils.c     sysfs RAPL, I/O JSON + CSV
+│   └── json_utils.h
+├── main.c
+├── Makefile
+└── README.md
+```
 
-## Install
+---
 
-To use cJSON:
-- `sudo apt-get install libcjson-dev`
+## Prérequis
+
+- Linux avec RAPL exposé via perf\_event (`/sys/bus/event_source/devices/power/`)
+- Permissions root (ou `sudo-g5k` sur Grid5000) pour perf\_event RAPL et MSR
+- Module noyau `msr` chargé : `modprobe msr`
+- gcc, pthread, libm — aucune dépendance externe (`cJSON` est embarqué)
+
+---
 
 ## Build
 
-Requirements:
-
-- GCC or Clang
-- POSIX environment (Linux recommended for perf / MSR)
-- `pthread` and `m` (math) libraries
-
-Example build (adjust as needed):
-
 ```bash
-gcc -O2 -Wall -pthread \
-  main.c parallel_sim.c json_utils.c cJSON.c \
-  -o counter
+make          # produit ./counter
+make test     # tests de logique (no root)
+make clean
 ```
 
-Or simply use:
+Pour les tests matériels (RAPL + MSR, nécessite root) :
 
 ```bash
-./run.sh
+cd tests && make test_probes
+sudo-g5k ./test_probes
 ```
 
-## Run
+---
 
-The binary reads its configuration from a JSON file (by default `input_demo.json`).
+## Utilisation
 
-Example `input_demo.json`:
+```bash
+sudo-g5k ./counter -i params/parallel_sim_uncore.json -o resultats/run1
+```
+
+Produit `resultats/run1.json` et `resultats/run1.csv`.
+
+Le binaire **fixe toujours les deux fréquences** (cœur et uncore) avant de
+lancer la mesure. Il n'existe pas de mode « sans uncore fixé » — pour comparer,
+utiliser le projet `lecture_energie` (fréquence uncore libre par défaut).
+
+### Options
+
+| Option | Description | Défaut |
+|--------|-------------|--------|
+| `-i`   | Fichier de config JSON | `params/parallel_sim_uncore.json` |
+| `-o`   | Base des fichiers de sortie | `resultats/sim1` |
+
+---
+
+## Format de config
 
 ```json
 {
   "params": {
-    "arch": "HSW",
-    "sensor": "PKG",
-    "freq": 2.4,
-    "n_work": 100000000,
-    "n_stat": 10,
-    "n_cores": 8,
-    "seq_fraction": 0.0
+    "arch":         "ICX",   ← architecture (sert de fallback si sysfs absent)
+    "sensor":       "PKG",   ← domaine RAPL : PKG, PP0, DRAM
+    "vendor":       "Intel", ← "Intel" ou "AMD"
+    "freq":         2.0,     ← fréquence cœur ET uncore en GHz
+    "n_work":       1000000000,  ← unités de travail par barrière
+    "n_stat":       30,      ← répétitions par point de mesure
+    "n_cores":      8,       ← n_c max ; sweep de n_cores…1
+    "seq_fraction": 0.0      ← fraction séquentielle (% de n_work)
   }
 }
 ```
 
-Fields:
+Le type RAPL est lu depuis sysfs (`/sys/bus/event_source/devices/power/type`)
+en priorité ; la table de fallback par architecture (`ICX=89`, `CLX=65`, etc.)
+n'est utilisée que si le sysfs est inaccessible.
 
-- `arch` – architecture string for RAPL (e.g. `"HSW"`).
-- `sensor` – RAPL domain (e.g. `"PKG"`).
-- `freq` – target CPU frequency in GHz.
-- `n_work` – total synthetic work units per barrier.
-- `n_stat` – number of repetitions per configuration.
-- `n_cores` – maximum number of threads; the program will sweep from 1 to this value.
-- `seq_fraction` – percentage of work done sequentially (0–100).
+---
 
-Run:
+## Format de sortie
 
-```bash
-sudo-g5k ./counter
+### CSV — `<output>.csv`
+
+```
+Energy_J, Time_s, Temperature_C, Voltage_V, N_cores, Seq_frac, Nbarriers
 ```
 
-The program will:
+Une ligne par sample. Chaque point de mesure produit `n_stat` lignes.
 
-1. Fix the CPU frequency using `cpupower`.
-2. For each `nthreads` between 1 and `n_cores`, run the parallel simulation.
-3. Measure energy, time, temperature, and voltage.
-4. Append results to the JSON output file (e.g. `sim1.json`).
-
-## JSON Output Format
-
-Top‑level structure:
+### JSON — `<output>.json`
 
 ```json
 {
-  "params": {
-    "date": "YYYY-MM-DD HH:MM:SS",
-    "arch": "HSW",
-    "sensor": "PKG",
-    "freq": 2.4,
-    "n_work": 100000000,
-    "n_stat": 1,
-    "n_cores": [1, 2, 4],
-    "seq_fraction": [0.0]
-  },
-  "energy": {
-    "1_0.00_1_100000000": [ /* energy samples */ ]
-  },
-  "time": {
-    "1_0.00_1_100000000": [ /* time samples */ ]
-  },
-  "temperature": {
-    "1_0.00_1_100000000": [ /* temperature samples */ ]
-  },
-  "voltage": {
-    "1_0.00_1_100000000": [ /* voltage samples */ ]
-  }
+  "params": { "date": "...", "vendor": "Intel", "arch": 89, ... },
+  "energy":      { "8_0.00_1_1000000000": [18.4, 18.6, ...] },
+  "time":        { "8_0.00_1_1000000000": [0.84, 0.83, ...] },
+  "temperature": { ... },
+  "voltage":     { ... }
 }
 ```
 
-- `params` – global experiment configuration.
-- `energy`, `time`, `temperature`, `voltage` – each is an object whose keys are experiment names.
-- Experiment names are generated by `build_name(sim)` using:
+Les clés d'expérience suivent le format `<nthreads>_<seq_frac>_<nbarriers>_<n_work>`.
 
-  ```text
-  <nthreads>_<seq_fraction>_<nbarriers>_<total_units_per_barrier>
-  ```
+---
 
-## Key APIs
+## Lancement sur G5K
 
-### Parallel simulation
+```bash
+# Depuis le frontend, réserver un nœud et se connecter :
+oarsub -I -l nodes=1,walltime=1:00:00
 
-- `parallel_sim_params_t`
-  - `nthreads` – number of worker threads.
-  - `nbarriers` – number of barriers (phases) per run.
-  - `seq_fraction` – percentage of work done sequentially (0–100).
-  - `total_units_per_barrier` – total synthetic work units per barrier.
+# Sur le nœud :
+cd /path/to/parallel_simulator_energy
+sudo-g5k bash launch_scripts/g5k_uncore_bench.sh 10   # 10 runs
+```
 
-- `void exec_parallel_simulation_core_control(const parallel_sim_params_t *params);`
-  - Runs the synthetic workload with topology‑aware CPU pinning.
+---
 
-### JSON utilities
+## Différences avec `lecture_energie`
 
-- `int create_output_json(const char *output_file, const params_t *params, const int *n_cores_array, int n_cores_count, const float *seq_fraction_array, int seq_fraction_count);`
-  - Create and initialize the output JSON file.
+| | `lecture_energie` | `parallel_simulator_energy` |
+|---|---|---|
+| Objectif | campagne générale, multi-nœuds | test de l'effet de l'uncore |
+| Benchmarks | multi-kernels (Mandelbrot, Monte Carlo, …) | parallel\_sim uniquement |
+| Fréquence uncore | libre (non fixée par défaut) | **toujours fixée** |
+| Topologie CPU | auto-détectée via hwloc | auto-détectée via sysfs |
+| Sorties | CSV + JSON + colonnes PP0/util | CSV + JSON (PKG uniquement) |
 
-- `void update_subjson_double_array(const char *output_file, const char *key, const char *exp_name, const double *values, int count);`
-  - Insert or replace a series of doubles under `key[exp_name]`.
-
-- `char *build_name(const parallel_sim_params_t *sim);`
-  - Build the experiment name string from simulation parameters (caller frees).
+---
 
 ## Notes
 
-- The code uses low‑level perf and MSR interfaces; it must be run on a compatible Linux system with appropriate permissions (usually root or `sudo` wrapper).
-- CPU affinity and topology constants (`TPC`, `CPS`, etc.) in `parallel_sim.c` are tuned for a specific machine and may need adjustment on other systems.
-
-```{note}
-IA generated
-```
+- Le sweep s'effectue de `n_cores` à 1 (du plus chaud au plus froid) pour
+  stabiliser la ligne de base thermique entre configurations.
+- Un run de chauffe (non mesuré) précède chaque série de `n_stat` mesures
+  pour amorcer les caches et le prédicteur de branchements.
+- La constante d'échelle RAPL est lue depuis sysfs
+  (`energy-pkg.scale`) et non codée en dur.
