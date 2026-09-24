@@ -1,0 +1,13 @@
+{
+  "params": {
+    "description": "Test ep — sweep n_cores [1..8], s=0, uncore verrouillé — parasilo (HSW, 8 cœurs/socket)",
+    "arch": "HSW",
+    "sensor": "PKG",
+    "vendor": "Intel",
+    "freq": 2.4,
+    "n_work": 1000000000,
+    "n_stat": 50,
+    "n_cores": 8,
+    "seq_fraction": 0.0
+  }
+}

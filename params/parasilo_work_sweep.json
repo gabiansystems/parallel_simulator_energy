@@ -1,0 +1,14 @@
+{
+  "_comment": "Test work_sweep — plusieurs tailles de charge n_work, s=0 — un fichier JSON par taille, lancer en boucle",
+  "params": {
+    "description": "Test work_sweep — n_work=1G, s=0, uncore verrouillé — parasilo (HSW)",
+    "arch": "HSW",
+    "sensor": "PKG",
+    "vendor": "Intel",
+    "freq": 2.4,
+    "n_work": 1000000000,
+    "n_stat": 30,
+    "n_cores": 8,
+    "seq_fraction": 0.0
+  }
+}

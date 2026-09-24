@@ -90,7 +90,7 @@ int main(int argc, char **argv)
             .nbarriers   = 1,
         };
 
-        if (measure_energy_temperature(exec_parallel_simulation_core_control,
+        if (measure_energy_temperature((bench_func_t)exec_parallel_simulation_core_control,
                                        &sim, &cfg) != 0)
             fprintf(stderr, "[WARN] measurement failed for nthreads=%d\n", nthreads);
 

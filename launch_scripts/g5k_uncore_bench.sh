@@ -16,7 +16,7 @@
 set -e
 
 N_RUNS="${1:-10}"
-PARAMS="params/parallel_sim_uncore.json"
+PARAMS="params/parasilo_ep.json"
 
 # ---- dependencies -----------------------------------------------------------
 modprobe msr 2>/dev/null || echo "[warn] modprobe msr failed — temp/uncore MSR may be unavailable"
